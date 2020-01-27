@@ -5,7 +5,6 @@ import jsonlines
 
 from bs4 import BeautifulSoup as bs
 
-
 base_url = "https://google.com"
 
 headers = dict()
@@ -31,9 +30,10 @@ async def fetch(session, url):
 
 
 async def fetch_all_page_deals(session, urls):
-    results = await asyncio.gather(*[asyncio.create_task(fetch(session, url))
-                                     for url in urls])
-    return results
+    tasks = [asyncio.create_task(fetch(session, url))
+             for url in urls]
+    for task in asyncio.as_completed(tasks):
+        yield await task
 
 
 def page_deals(source):
@@ -50,8 +50,8 @@ def parse_deal(session, url, queue):
 
 async def consumer(queue):
     while True:
-        result = await queue.get()
-        if result is None:
+        lines = await queue.get()
+        if lines is None:
             break
         # Write to file. I'd recommend using a threadpool to do this,
         # via run_in_executor, as filesystem IO will block otherwise.
@@ -60,6 +60,7 @@ async def consumer(queue):
         # Where path is a path-like or string, and lines is a
         # list of each line to write to the file. You can probably parse the
         # lines using each result from the queue.
+        path = "deals.jsonl"
         await loop.run_in_executor(None, write_to_file, path, lines)
 
         # Note: loop.run_in_executor uses the format of:
@@ -69,15 +70,16 @@ async def consumer(queue):
 
 # Would like to convert this to jsonlines
 def write_to_file(path, lines):
-    with open(path, 'w') as f:
+    with jsonlines.open(path, 'a') as writer:
         for line in lines:
-            f.write(line)
+            writer.write(line)
 
 
 async def main():
     async with aiohttp.ClientSession() as session:
         queue = asyncio.Queue()
-        nos = await number_of_pages(session)
+        # nos = await number_of_pages(session)
+        nos = 1
 
         async for page_deal in fetch_all_page_deals(session, nos):
             # Parse IN-Store & Online upc, sku, title, price, location
@@ -85,6 +87,4 @@ async def main():
 
 
 if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
-    loop.close()
+    asyncio.run(main())
